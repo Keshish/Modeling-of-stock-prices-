@@ -11,99 +11,125 @@ idx = floor(split_ratio * length(real_prices));
 train_data = real_prices(1:idx);
 test_data = real_prices(idx + 1:end);
 
-% Prepare training and testing matrices
-X_train = [train_data(1:end - 1)];
-Y_train = train_data(2:end);
-X_test = [test_data(1:end - 1)];
-Y_test = test_data(2:end);
+k_max = 3; % Maximum degree of polynomial terms to consider
+best_k = 1;
+best_model = [];
+best_cost = Inf;
 
-% Normalize the features
-mu_X_train = mean(X_train);
-sigma_X_train = std(X_train);
-X_train_sgd = (X_train - mu_X_train) ./ sigma_X_train;
-X_test_sgd = (X_test - mu_X_train) ./ sigma_X_train;
-
-% Main script to estimate parameters for different k and test the model
-num_iters = 1000; % Number of iterations for gradient descent
-alpha = 0.01; % Learning rate for gradient descent
-lambda = 0.99; % Forgetting factor for recursive LSQ
-dt = 1; % Time increment (assumed to be 1 for simplicity)
-
-for k = 2:5
-    % Construct feature matrix for current k
-    X_train = zeros(length(train_data) - 1, k);
-    X_test = zeros(length(test_data) - 1, k);
-
-    for j = 1:k
-        X_train(:, j) = train_data(1:end - 1) .^ j;
-        X_test(:, j) = test_data(1:end - 1) .^ j;
+% Iterate over different values of k
+for k = 1:k_max
+    % Construct features for train data
+    X_train = constructFeatures(train_data, k);
+    Y_train = train_data(2:end);
+    
+    % Estimate parameters using LSQ
+    thetaLS = LSQ(X_train(1:end-1, :), Y_train);
+    
+    % Predict on train data
+    Y_pred_train = X_train(1:end-1, :) * thetaLS;
+    
+    % Compute cost
+    cost = computeCost(X_train(1:end-1, :), Y_train, thetaLS);
+    
+    if cost < best_cost
+        best_cost = cost;
+        best_k = k;
+        best_model = thetaLS;
     end
-
-    % Normalize features for gradient descent
-    mu_X_train_k = mean(X_train);
-    sigma_X_train_k = std(X_train);
-    X_train_k_sgd = (X_train - mu_X_train_k) ./ sigma_X_train_k;
-    X_test_k_sgd = (X_test - mu_X_train_k) ./ sigma_X_train_k;
-
-    % LSQ Estimation
-    theta_LSQ = LSQ(X_train, Y_train);
-
-    % estimate sigma
-    sigma = 1e-2;
-
-    % Gradient Descent Estimation
-    initial_theta = zeros(size(X_train, 2), 1);
-    [theta_GD, J_history] = gradientDescent(X_train_k_sgd, Y_train, initial_theta, alpha, num_iters);
-
-    % Recursive LSQ Estimation
-    [theta_RLSQ, P] = recursiveLSQ(X_train, Y_train, lambda);
-
-    % Simulate differential equation using LSQ estimates
-    S0 = X_test(1);
-    S_sim_LSQ = simulate_diff_eq(theta_LSQ, sigma, S0, dt, length(X_test));
-
-    % Simulate differential equation using Gradient Descent estimates
-    S_sim_GD = simulate_diff_eq(theta_GD, sigma, S0, dt, length(X_test));
-
-    % Simulate differential equation using Recursive LSQ estimates
-    S_sim_RLSQ = simulate_diff_eq(theta_RLSQ, sigma, S0, dt, length(X_test));
-
-    % Compare simulated values with actual test data
-    fprintf('For k = %d:\n', k);
-    fprintf('LSQ estimates:\n');
-    disp(theta_LSQ);
-    fprintf('Gradient Descent estimates:\n');
-    disp(theta_GD);
-    fprintf('Recursive LSQ estimates:\n');
-    disp(theta_RLSQ);
-
-    % Plot results
-    figure;
-    plot(Y_test(:, 1), 'b', 'DisplayName', 'Actual');
-    hold on;
-    plot(1:length(S_sim_LSQ), S_sim_LSQ, 'r', 'DisplayName', 'LSQ Simulated');
-    plot(1:length(S_sim_GD), S_sim_GD, 'g', 'DisplayName', 'GD Simulated');
-    plot(1:length(S_sim_RLSQ), S_sim_RLSQ, 'b', 'DisplayName', 'RLSQ Simulated');
-    legend;
-    title(sprintf('Simulation results for k = %d', k));
-    xlabel('Time');
-    ylabel('S(t)');
-    hold off;
 end
 
-% Function to simulate the differential equation
-function S_sim = simulate_diff_eq(theta, sigma, S0, dt, N)
-    S_sim = zeros(N, 1);
-    S_sim(1) = S0;
+% Construct features for test data
+X_test = constructFeatures(test_data, best_k);
+Y_test = test_data(2:end);
+
+% Predict on test data
+Y_pred_test = X_test(1:end-1, :) * best_model;
+
+% Print MSE and R^2
+MSE = computeCost(X_test(1:end-1, :), Y_test, best_model);
+R2 = 1 - MSE / var(Y_test);
+
+fprintf('Best model has degree k = %d\n', best_k);
+fprintf('MSE: %.4f\n', MSE);
+fprintf('R^2: %.4f\n', R2);
+
+% Estimate sigma
+log_returns = log(train_data(2:end) ./ train_data(1:end-1));
+sigma = std(log_returns);
+
+% Simulation parameters
+T = length(test_data) - 1;
+dt = 1; % Assuming daily data
+S0 = test_data(1);
+
+% Simulate the stock prices
+simulated_prices = simulate(S0, best_model, sigma, T, dt, best_k);
+
+sim_test = simulate(52.3, best_model, sigma, 1, 1, best_k);
+fprintf('Simulated price: %.4f\n', sim_test);
+
+% Also simulate for each day with the previous day's data
+simulated_prices_daily = zeros(T, 1);
+for t = 2:T
+    simulated_prices_daily(t) = simulate(test_data(t-1), best_model, sigma, 1, 1, best_k);
+end
+
+% Print MSE and R^2
+MSE_simulated = mean((simulated_prices - test_data(2:end)) .^ 2);
+R2_simulated = 1 - MSE_simulated / var(test_data(2:end));
+
+fprintf('MSE (Simulated): %.4f\n', MSE_simulated);
+fprintf('R^2 (Simulated): %.4f\n', R2_simulated);
+
+% Plot results
+figure;
+plot(test_data, 'b');
+hold on;
+plot(simulated_prices, 'r');
+legend('Actual', 'Simulated');
+title('Stock Price Prediction with Stochastic Model');
+xlabel('Time');
+ylabel('Stock Price');
+hold off;
+
+figure;
+plot(test_data(2:end), 'b');
+hold on;
+plot(simulated_prices_daily, 'r');
+legend('Actual', 'Simulated');
+title('Stock Price Prediction with Daily Simulation');
+xlabel('Time');
+ylabel('Stock Price');
+hold off;
+
+
+% Simulate the model
+function S = simulate(S0, theta, sigma, T, dt, k)
+    N = round(T / dt);
+    S = zeros(N, 1);
+    S(1) = S0;
     for t = 2:N
-        S_t = S_sim(t-1);
-        dS = 0;
-        for k = 1:length(theta)-1
-            dS = dS + theta(k+1) * S_t^k * dt;
+        dW = sqrt(dt) * randn; % Wiener process increment
+        drift = 0;
+        for i = 1:k
+            drift = drift + theta(i) * S(t-1)^i;
         end
-        dz = sqrt(dt) * randn; % Wiener process increment
-        dS = dS + sigma * S_t * dz;
-        S_sim(t) = S_t + dS;
+        % Ensure the drift term is not excessively large
+        drift = min(max(drift, -1e2), 1e2);
+        % Update stock price
+        
+        S(t) = S(t-1) + drift * dt + sigma * S(t-1) * dW;
+        % Ensure non-negative stock price
+        S(t) = max(S(t), 0);
+    end
+end
+
+% Feature Construction
+function X = constructFeatures(data, k)
+    n = length(data);
+    X = zeros(n, k);
+    for i = 1:k
+        X(:, i) = data .^ i;
     end
 end
 

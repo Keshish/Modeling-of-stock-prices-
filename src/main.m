@@ -104,6 +104,7 @@ theta = rls_params; % Use RLS parameters as initial guess
 
 % Predict on test data
 predicted_prices = model_fun(trained_params, X_test);
+predicted_prices_simulated = simulate(test_data(1), trained_params, sigma, length(test_data) - 1, 1, 2);
 predicted_prices_rls = model_fun(rls_params, X_test);
 predicted_prices_sgd = model_fun(trained_params_sgd, X_test);
 
@@ -128,18 +129,24 @@ xlabel('Time');
 ylabel('Price');
 axis tight;
 
-function S_sim = simulate_diff_eq(theta, sigma, S0, dt, N)
-    S_sim = zeros(N, 1);
-    S_sim(1) = S0;
+% Simulate the model
+function S = simulate(S0, theta, sigma, T, dt, k)
+    N = round(T / dt);
+    S = zeros(N, 1);
+    S(1) = S0;
     for t = 2:N
-        S_t = S_sim(t-1);
-        dS = 0;
-        for k = 1:length(theta)-1
-            dS = dS + theta(k+1) * S_t^k * dt;
+        dW = sqrt(dt) * randn; % Wiener process increment
+        drift = 0;
+        for i = 1:k
+            drift = drift + theta(i) * S(t-1)^i;
         end
-        dz = sqrt(dt) * randn; % Wiener process increment
-        dS = dS + sigma * S_t * dz;
-        S_sim(t) = S_t + dS;
+        fprintf('Drift: %f\n', drift);
+        % Ensure the drift term is not excessively large
+        drift = min(max(drift, -1e2), 1e2);
+        % Update stock price
+        S(t) = S(t-1) + drift * dt + sigma * S(t-1) * dW;
+        % Ensure non-negative stock price
+        S(t) = max(S(t), 0);
     end
 end
 
