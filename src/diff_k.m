@@ -15,7 +15,7 @@ t = linspace(0, T, N);
 
 % Initialize stock price vector
 S = zeros(1, N);
-S(1) = S0;
+S(1) = S0;RLSQ; % Use RLS parameters as initial guess
 
 % Generate S(t)
 for i = 1:N - 1
